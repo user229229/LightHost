@@ -1,4 +1,4 @@
-#include "../JuceLibraryCode/JuceHeader.h"
+#include "JuceHeader.h"
 #include "PluginWindow.h"
 
 class PluginWindow;
@@ -27,10 +27,10 @@ PluginWindow::PluginWindow (Component* const pluginEditor,
     
 }
 
-void PluginWindow::closeCurrentlyOpenWindowsFor (const uint32 nodeId)
+void PluginWindow::closeCurrentlyOpenWindowsFor (const uint32 nodeUid)
 {
     for (int i = activePluginWindows.size(); --i >= 0;)
-        if (activePluginWindows.getUnchecked(i)->owner->nodeId == nodeId)
+        if (activePluginWindows.getUnchecked(i)->owner->nodeID.uid == nodeUid)
             delete activePluginWindows.getUnchecked (i);
 }
 
@@ -71,8 +71,8 @@ public:
     }
 
     void refresh() { }
-    virtual void audioProcessorChanged (AudioProcessor*) { }
-    virtual void audioProcessorParameterChanged(AudioProcessor* processor, int, float) { }
+    virtual void audioProcessorChanged (AudioProcessor*, const ChangeDetails&) override { }
+    virtual void audioProcessorParameterChanged(AudioProcessor*, int, float) override { }
 
 private:
     AudioProcessor& owner;

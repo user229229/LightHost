@@ -6,7 +6,7 @@
 //
 //
 
-#include "../JuceLibraryCode/JuceHeader.h"
+#include "JuceHeader.h"
 #include "IconMenu.hpp"
 #include "PluginWindow.h"
 #include <ctime>
@@ -64,22 +64,19 @@ IconMenu::IconMenu() : INDEX_EDIT(1000000), INDEX_BYPASS(2000000), INDEX_DELETE(
 {
     // Initiialization
     formatManager.addDefaultFormats();
-	#if JUCE_WINDOWS
-	x = y = 0;
-	#endif
     // Audio device
-    ScopedPointer<XmlElement> savedAudioState (getAppProperties().getUserSettings()->getXmlValue("audioDeviceState"));
-    deviceManager.initialise(256, 256, savedAudioState, true);
+    std::unique_ptr<XmlElement> savedAudioState (getAppProperties().getUserSettings()->getXmlValue("audioDeviceState"));
+    deviceManager.initialise(256, 256, savedAudioState.get(), true);
     player.setProcessor(&graph);
     deviceManager.addAudioCallback(&player);
     // Plugins - all
-    ScopedPointer<XmlElement> savedPluginList(getAppProperties().getUserSettings()->getXmlValue("pluginList"));
+    std::unique_ptr<XmlElement> savedPluginList(getAppProperties().getUserSettings()->getXmlValue("pluginList"));
     if (savedPluginList != nullptr)
         knownPluginList.recreateFromXml(*savedPluginList);
     pluginSortMethod = KnownPluginList::sortByManufacturer;
     knownPluginList.addChangeListener(this);
     // Plugins - active
-    ScopedPointer<XmlElement> savedPluginListActive(getAppProperties().getUserSettings()->getXmlValue("pluginListActive"));
+    std::unique_ptr<XmlElement> savedPluginListActive(getAppProperties().getUserSettings()->getXmlValue("pluginListActive"));
     if (savedPluginListActive != nullptr)
         activePluginList.recreateFromXml(*savedPluginListActive);
     loadActivePlugins();
@@ -96,11 +93,13 @@ IconMenu::~IconMenu()
 void IconMenu::setIcon()
 {
 	// Set menu icon
+	Image icon;
 	#if JUCE_MAC
 		if (exec("defaults read -g AppleInterfaceStyle").compare("Dark") == 1)
-			setIconImage(ImageFileFormat::loadFrom(BinaryData::menu_icon_white_png, BinaryData::menu_icon_white_pngSize));
+		    icon = ImageFileFormat::loadFrom(BinaryData::menu_icon_white_png, BinaryData::menu_icon_white_pngSize);
 		else
-			setIconImage(ImageFileFormat::loadFrom(BinaryData::menu_icon_png, BinaryData::menu_icon_pngSize));
+			icon = ImageFileFormat::loadFrom(BinaryData::menu_icon_png, BinaryData::menu_icon_pngSize);
+		setIconImage(icon, icon);
 	#else
 		String defaultColor;
 	#if JUCE_WINDOWS
@@ -111,12 +110,11 @@ void IconMenu::setIcon()
 		if (!getAppProperties().getUserSettings()->containsKey("icon"))
 			getAppProperties().getUserSettings()->setValue("icon", defaultColor);
 		String color = getAppProperties().getUserSettings()->getValue("icon");
-		Image icon;
 		if (color.equalsIgnoreCase("white"))
 			icon = ImageFileFormat::loadFrom(BinaryData::menu_icon_white_png, BinaryData::menu_icon_white_pngSize);
 		else if (color.equalsIgnoreCase("black"))
 			icon = ImageFileFormat::loadFrom(BinaryData::menu_icon_png, BinaryData::menu_icon_pngSize);
-		setIconImage(icon);
+		setIconImage(icon, icon);
 	#endif
 }
 
@@ -128,12 +126,12 @@ void IconMenu::loadActivePlugins()
 	const int CHANNEL_TWO = 1;
 	PluginWindow::closeAllCurrentlyOpenWindows();
     graph.clear();
-    inputNode = graph.addNode(new AudioProcessorGraph::AudioGraphIOProcessor(AudioProcessorGraph::AudioGraphIOProcessor::audioInputNode), INPUT);
-    outputNode = graph.addNode(new AudioProcessorGraph::AudioGraphIOProcessor(AudioProcessorGraph::AudioGraphIOProcessor::audioOutputNode), OUTPUT);
+	inputNode = graph.addNode(std::make_unique<AudioProcessorGraph::AudioGraphIOProcessor> (AudioProcessorGraph::AudioGraphIOProcessor::audioInputNode), AudioProcessorGraph::NodeID(INPUT));
+    outputNode = graph.addNode(std::make_unique<AudioProcessorGraph::AudioGraphIOProcessor> (AudioProcessorGraph::AudioGraphIOProcessor::audioOutputNode), AudioProcessorGraph::NodeID(OUTPUT));
     if (activePluginList.getNumTypes() == 0)
     {
-        graph.addConnection(INPUT, CHANNEL_ONE, OUTPUT, CHANNEL_ONE);
-        graph.addConnection(INPUT, CHANNEL_TWO, OUTPUT, CHANNEL_TWO);
+		graph.addConnection ({ { AudioProcessorGraph::NodeID(INPUT), CHANNEL_ONE }, { AudioProcessorGraph::NodeID(OUTPUT), CHANNEL_ONE } });
+		graph.addConnection ({ { AudioProcessorGraph::NodeID(INPUT), CHANNEL_TWO }, { AudioProcessorGraph::NodeID(OUTPUT), CHANNEL_TWO } });
     }
 	int pluginTime = 0;
 	int lastId = 0;
@@ -143,36 +141,36 @@ void IconMenu::loadActivePlugins()
     {
         PluginDescription plugin = getNextPluginOlderThanTime(pluginTime);
         String errorMessage;
-        AudioPluginInstance* instance = formatManager.createPluginInstance(plugin, graph.getSampleRate(), graph.getBlockSize(), errorMessage);
+        std::unique_ptr<AudioPluginInstance> instance = formatManager.createPluginInstance(plugin, graph.getSampleRate(), graph.getBlockSize(), errorMessage);
 		String pluginUid = getKey("state", plugin);
         String savedPluginState = getAppProperties().getUserSettings()->getValue(pluginUid);
         MemoryBlock savedPluginBinary;
         savedPluginBinary.fromBase64Encoding(savedPluginState);
         instance->setStateInformation(savedPluginBinary.getData(), savedPluginBinary.getSize());
-        graph.addNode(instance, i);
+        graph.addNode(std::move(instance), AudioProcessorGraph::NodeID(i)); // TODO https://stackoverflow.com/a/17473958
 		String key = getKey("bypass", plugin);
 		bool bypass = getAppProperties().getUserSettings()->getBoolValue(key, false);
         // Input to plugin
         if ((!hasInputConnected) && (!bypass))
         {
-            graph.addConnection(INPUT, CHANNEL_ONE, i, CHANNEL_ONE);
-            graph.addConnection(INPUT, CHANNEL_TWO, i, CHANNEL_TWO);
+            graph.addConnection({ { AudioProcessorGraph::NodeID(INPUT), CHANNEL_ONE }, { AudioProcessorGraph::NodeID(i), CHANNEL_ONE } });
+            graph.addConnection({ { AudioProcessorGraph::NodeID(INPUT), CHANNEL_TWO }, { AudioProcessorGraph::NodeID(i), CHANNEL_TWO } });
 			hasInputConnected = true;
         }
         // Connect previous plugin to current
-        else if (!bypass)
+        else if ((!bypass))
         {
-            graph.addConnection(lastId, CHANNEL_ONE, i, CHANNEL_ONE);
-            graph.addConnection(lastId, CHANNEL_TWO, i, CHANNEL_TWO);
+            graph.addConnection({ { AudioProcessorGraph::NodeID(lastId), CHANNEL_ONE }, { AudioProcessorGraph::NodeID(i), CHANNEL_ONE } });
+            graph.addConnection({ { AudioProcessorGraph::NodeID(lastId), CHANNEL_TWO }, { AudioProcessorGraph::NodeID(i), CHANNEL_TWO } });
         }
 		if (!bypass)
-			lastId = i;
+		    lastId = i;
     }
 	if (lastId > 0)
 	{
 		// Last active plugin to output
-		graph.addConnection(lastId, CHANNEL_ONE, OUTPUT, CHANNEL_ONE);
-		graph.addConnection(lastId, CHANNEL_TWO, OUTPUT, CHANNEL_TWO);
+		graph.addConnection({ { AudioProcessorGraph::NodeID(lastId), CHANNEL_ONE }, { AudioProcessorGraph::NodeID(OUTPUT), CHANNEL_ONE } });
+		graph.addConnection({ { AudioProcessorGraph::NodeID(lastId), CHANNEL_TWO }, { AudioProcessorGraph::NodeID(OUTPUT), CHANNEL_TWO } });
 	}
 }
 
@@ -201,19 +199,19 @@ void IconMenu::changeListenerCallback(ChangeBroadcaster* changed)
 {
     if (changed == &knownPluginList)
     {
-        ScopedPointer<XmlElement> savedPluginList (knownPluginList.createXml());
+        std::unique_ptr<XmlElement> savedPluginList (knownPluginList.createXml());
         if (savedPluginList != nullptr)
         {
-            getAppProperties().getUserSettings()->setValue ("pluginList", savedPluginList);
+            getAppProperties().getUserSettings()->setValue ("pluginList", savedPluginList.get());
             getAppProperties().saveIfNeeded();
         }
     }
     else if (changed == &activePluginList)
     {
-        ScopedPointer<XmlElement> savedPluginList (activePluginList.createXml());
+        std::unique_ptr<XmlElement> savedPluginList (activePluginList.createXml());
         if (savedPluginList != nullptr)
         {
-            getAppProperties().getUserSettings()->setValue ("pluginListActive", savedPluginList);
+            getAppProperties().getUserSettings()->setValue ("pluginListActive", savedPluginList.get());
             getAppProperties().saveIfNeeded();
         }
     }
@@ -280,17 +278,7 @@ void IconMenu::timerCallback()
 	#if JUCE_MAC || JUCE_LINUX
     menu.showMenuAsync(PopupMenu::Options().withTargetComponent(this), ModalCallbackFunction::forComponent(menuInvocationCallback, this));
 	#else
-	if (x == 0 || y == 0)
-	{
-		POINT iconLocation;
-		iconLocation.x = 0;
-		iconLocation.y = 0;
-		GetCursorPos(&iconLocation);
-		x = iconLocation.x;
-		y = iconLocation.y;
-	}
-	juce::Rectangle<int> rect(x, y, 1, 1);
-	menu.showMenuAsync(PopupMenu::Options().withTargetScreenArea(rect), ModalCallbackFunction::forComponent(menuInvocationCallback, this));
+	menu.showMenuAsync(PopupMenu::Options().withMousePosition(), ModalCallbackFunction::forComponent(menuInvocationCallback, this));
 	#endif
 }
 
@@ -348,13 +336,12 @@ void IconMenu::menuInvocationCallback(int id, IconMenu* im)
 			int index = id - im->INDEX_DELETE;
 			std::vector<PluginDescription> timeSorted = im->getTimeSortedList();
 			String key = getKey("order", timeSorted[index]);
-			int unsortedIndex = 0;
+			PluginDescription typeToRemove;
 			for (int i = 0; im->activePluginList.getNumTypes(); i++)
 			{
-				PluginDescription current = *im->activePluginList.getType(i);
-				if (key.equalsIgnoreCase(getKey("order", current)))
+				typeToRemove = *im->activePluginList.getType(i);
+				if (key.equalsIgnoreCase(getKey("order", typeToRemove)))
 				{
-					unsortedIndex = i;
 					break;
 				}
 			}
@@ -366,7 +353,7 @@ void IconMenu::menuInvocationCallback(int id, IconMenu* im)
 			getAppProperties().saveIfNeeded();
 			
 			// Remove plugin from list
-            im->activePluginList.removeType(unsortedIndex);
+            im->activePluginList.removeType(typeToRemove);
 
 			// Save current states
 			im->savePluginStates();
@@ -403,7 +390,7 @@ void IconMenu::menuInvocationCallback(int id, IconMenu* im)
         // Show active plugin GUI
 		else if (id >= im->INDEX_EDIT && id < im->INDEX_EDIT + 1000000)
         {
-            if (const AudioProcessorGraph::Node::Ptr f = im->graph.getNodeForId(id - im->INDEX_EDIT + 1))
+            if (const AudioProcessorGraph::Node::Ptr f = im->graph.getNodeForId(AudioProcessorGraph::NodeID(id - im->INDEX_EDIT + 1)))
                 if (PluginWindow* const w = PluginWindow::getWindowFor(f, PluginWindow::Normal))
                     w->toFront(true);
         }
@@ -477,7 +464,7 @@ void IconMenu::savePluginStates()
 	std::vector<PluginDescription> list = getTimeSortedList();
     for (int i = 0; i < activePluginList.getNumTypes(); i++)
     {
-		AudioProcessorGraph::Node* node = graph.getNodeForId(i + 1);
+		AudioProcessorGraph::Node* node = graph.getNodeForId(AudioProcessorGraph::NodeID(i + 1));
 		if (node == nullptr)
 			break;
         AudioProcessor& processor = *node->getProcessor();
@@ -491,8 +478,8 @@ void IconMenu::savePluginStates()
 
 void IconMenu::showAudioSettings()
 {
-    AudioDeviceSelectorComponent audioSettingsComp (deviceManager, 0, 256, 0, 256, false, false, true, true);
-    audioSettingsComp.setSize(500, 450);
+    AudioDeviceSelectorComponent audioSettingsComp (deviceManager, 0, 256, 0, 256, false, false, true, false);
+    audioSettingsComp.setSize(500, 600);
     
     DialogWindow::LaunchOptions o;
     o.content.setNonOwned(&audioSettingsComp);
@@ -505,9 +492,9 @@ void IconMenu::showAudioSettings()
 
     o.runModal();
         
-    ScopedPointer<XmlElement> audioState(deviceManager.createStateXml());
+    std::unique_ptr<XmlElement> audioState(deviceManager.createStateXml());
         
-    getAppProperties().getUserSettings()->setValue("audioDeviceState", audioState);
+    getAppProperties().getUserSettings()->setValue("audioDeviceState", audioState.get());
     getAppProperties().getUserSettings()->saveIfNeeded();
 }
 
@@ -520,13 +507,10 @@ void IconMenu::reloadPlugins()
 
 void IconMenu::removePluginsLackingInputOutput()
 {
-	std::vector<int> removeIndex;
-	for (int i = 0; i < knownPluginList.getNumTypes(); i++)
-	{
-		PluginDescription* plugin = knownPluginList.getType(i);
-		if (plugin->numInputChannels < 2 || plugin->numOutputChannels < 2)
-			removeIndex.push_back(i);
-	}
-	for (int i = 0; i < removeIndex.size(); i++)
-		knownPluginList.removeType(removeIndex[i] - i);
+	// TODO needs sanity check
+    for (const auto& plugin : knownPluginList.getTypes())
+    {
+        if (plugin.numInputChannels < 2 || plugin.numOutputChannels < 2)
+		    knownPluginList.removeType(plugin);
+    }
 }
