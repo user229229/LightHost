@@ -10,8 +10,14 @@ cmake_minimum_required(VERSION 3.15)
 # This cannot have spaces (but PRODUCT_NAME can)
 set(PROJECT_NAME "LightHost")
 
+# Read project version from env variable, allowing it to be provided by CI/CD workflow
+set(PROJECT_VERSION $ENV{PROJECT_VERSION})
+if(NOT PROJECT_VERSION)
+    set(PROJECT_VERSION 0.0.0.0)
+endif()
+
 # For simplicity, the name of the project is also the name of the target
-project(${PROJECT_NAME} VERSION 1.2.2)
+project(${PROJECT_NAME} VERSION ${PROJECT_VERSION})
 
 # Allow to use deprecated MessageManager::runDispatchLoopUntil
 add_compile_definitions(JUCE_MODAL_LOOPS_PERMITTED)
