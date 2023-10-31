@@ -508,9 +508,9 @@ void IconMenu::reloadPlugins()
 void IconMenu::removePluginsLackingInputOutput()
 {
 	// TODO needs sanity check
-    for (const auto& plugin : knownPluginList.getTypes())
-    {
-        if (plugin.numInputChannels < 2 || plugin.numOutputChannels < 2)
-		    knownPluginList.removeType(plugin);
-    }
+    // for (const auto& plugin : knownPluginList.getTypes())
+    // {
+    //     if (plugin.numInputChannels < 2 || plugin.numOutputChannels < 2)
+	// 	    knownPluginList.removeType(plugin);
+    // }
 }
